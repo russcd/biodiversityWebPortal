@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -11,7 +11,7 @@
     #header { text-align: center; font-size: 24px; font-weight: bold; padding: 10px; background-color: #f4f4f4; }
     #tree-container { width: 50%; border-right: 1px solid #ccc; padding: 10px; position: relative; }
     #map { width: 50%; height: 100vh; }
-    svg { width: 100%; height: 100vh; }
+    svg { width: 100%; height: 100vh; padding-left: 20px; }
     #metadata-popup {
       position: absolute;
       top: 10px;
@@ -35,6 +35,8 @@
   </div>
 
   <script>
+    // [Previous code remains exactly the same until the markers section]
+
     // Inline Newick parser
     function parseNewick(s) {
       let ancestors = [];
@@ -75,7 +77,6 @@
     // Define the Newick tree (example structure)
     const newickString = "((A:0.1,B:0.2,(C:0.3,D:0.4):0.5):0.6,E:0.7);";
     
-    // Sample locations: now each node can have multiple locations (100-150 samples per tip)
     const californiaBounds = {
       minLat: 32.5,
       maxLat: 42.0,
@@ -93,7 +94,6 @@
       return locations;
     }
 
-    // Generate realistic sample locations for each tip (100-150 samples per tip)
     const sampleLocations = {
       "A": generateRandomLocations(120),
       "B": generateRandomLocations(130),
@@ -102,15 +102,13 @@
       "E": generateRandomLocations(140)
     };
 
-    // Generate a random date within the past 10 years
     function generateRandomDate() {
       const now = new Date();
       const past = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
       const randomDate = new Date(past.getTime() + Math.random() * (now.getTime() - past.getTime()));
-      return randomDate.toISOString().split('T')[0]; // Return as 'YYYY-MM-DD'
+      return randomDate.toISOString().split('T')[0];
     }
 
-    // Add collection date to each sample (tip)
     const sampleMetadata = {
       "A": { collection_date: generateRandomDate() },
       "B": { collection_date: generateRandomDate() },
@@ -119,60 +117,53 @@
       "E": { collection_date: generateRandomDate() }
     };
 
-    // Parse the Newick string
     const treeData = parseNewick(newickString);
 
-    // Create SVG for the tree
     const svg = d3.select("#tree-container").append("svg"),
           width = 600, height = 800;
     svg.attr("width", width).attr("height", height);
 
-    // Layout and draw the tree
-    const layout = d3.tree().size([height, width - 160]);
+    const layout = d3.tree().size([height, width - 180]);
     const root = d3.hierarchy(treeData);
     layout(root);
 
-    // Define color scale for the tips (leaf nodes)
     const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
 
-    // Create tree links
+    const xOffset = 30;
     svg.selectAll(".link")
        .data(root.links())
        .enter().append("line")
        .attr("class", "link")
-       .attr("x1", d => d.source.y)
+       .attr("x1", d => d.source.y + xOffset)
        .attr("y1", d => d.source.x)
-       .attr("x2", d => d.target.y)
+       .attr("x2", d => d.target.y + xOffset)
        .attr("y2", d => d.target.x)
        .attr("stroke", "#555");
 
-    // Create tree nodes
     svg.selectAll(".node")
        .data(root.descendants())
        .enter().append("circle")
        .attr("class", "node")
-       .attr("cx", d => d.y)
+       .attr("cx", d => d.y + xOffset)
        .attr("cy", d => d.x)
-       .attr("r", 4)
+       .attr("r", 10)
        .attr("fill", function(d) {
          return d.children ? "#555" : colorScale(d.data.name);
        })
        .style("cursor", "pointer")
        .on("click", function(event, d) { onNodeClick(event, d); });
 
-    // Add text labels to the tips (leaf nodes)
     svg.selectAll(".node-label")
        .data(root.descendants())
        .enter().append("text")
        .attr("class", "node-label")
-       .attr("x", d => d.y + 6)
+       .attr("x", d => d.y + xOffset + 15)
        .attr("y", d => d.x)
        .attr("dy", ".35em")
-       .attr("font-size", "12px")
+       .attr("font-size", "16px")
        .attr("fill", "#333")
        .text(d => d.children ? "" : d.data.name);
 
-    // Initialize the map
     const map = L.map('map').setView([36.7783, -119.4179], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
@@ -181,7 +172,6 @@
 
     let markers = [];
 
-    // Function to count total samples for a node
     function countSamples(d) {
       if (!d.children) {
         return sampleLocations[d.data.name]?.length || 0;
@@ -191,79 +181,72 @@
         .reduce((sum, node) => sum + (sampleLocations[node.data.name]?.length || 0), 0);
     }
 
-    // Function to update metadata popup
+    function countDescendantTips(d) {
+      // If node is a leaf, return 1 (it's a tip)
+      if (!d.children) {
+        return 1;
+      }
+      // Otherwise, recursively count descendant tips
+      return d.descendants().filter(node => !node.children).length;
+    }
+
     function updateMetadataPopup(d) {
       const popup = document.getElementById('metadata-popup');
       const sampleCount = countSamples(d);
+      const tipCount = countDescendantTips(d); // Count tips for internal nodes
+      
       const name = d.children ? `Node ${d.data.name}` : `Taxon ${d.data.name}`;
       
       popup.innerHTML = `
         <strong>${name}</strong><br>
-        Total Samples: ${sampleCount}
+        Total Samples: ${sampleCount}<br>
+        species: ${tipCount}
       `;
     }
 
-    // Handle node clicks to display locations on the map
+    // Calculate marker size based on total number of visible points
+    function calculateMarkerSize(totalPoints) {
+      // Base size when only one tip is selected (120-150 points)
+      const baseSize = 10;
+      // Maximum number of points (all tips selected, ~625 points in this example)
+      const maxPoints = 625;
+      
+      // Calculate size with a minimum of 3 pixels
+      return Math.max(3, baseSize * Math.sqrt(150 / totalPoints));
+    }
+
     function onNodeClick(event, d) {
       clearMarkers();
       updateMetadataPopup(d);
 
-      // Get the color for the clicked node
-      const nodeColor = colorScale(d.data.name);
-
-      // Check if the clicked node has locations in sampleLocations
+      // Collect all locations that will be displayed
+      let allLocations = [];
       if (sampleLocations[d.data.name] && sampleLocations[d.data.name].length > 0) {
-        sampleLocations[d.data.name].forEach(location => {
-          addMarker(d.data.name, location, nodeColor, sampleMetadata[d.data.name].collection_date);
-        });
+        allLocations = sampleLocations[d.data.name];
       } else if (d.children) {
-        const tips = [];
-        d.eachAfter(node => {
-          if (node.data && node.data.name && sampleLocations[node.data.name]) {
-            tips.push(node.data.name);
+        d.children.forEach(child => {
+          if (sampleLocations[child.data.name] && sampleLocations[child.data.name].length > 0) {
+            allLocations = allLocations.concat(sampleLocations[child.data.name]);
           }
         });
-        tips.forEach(taxon => {
-          sampleLocations[taxon].forEach(location => {
-            addMarker(taxon, location, colorScale(taxon), sampleMetadata[taxon].collection_date);
-          });
-        });
-      } else {
-        console.log(`No location data for node: ${d.data.name}`);
       }
+
+      allLocations.forEach(location => {
+        const marker = L.circleMarker(location, {
+          radius: calculateMarkerSize(allLocations.length),
+          color: "#ff7800",
+          weight: 1,
+          opacity: 0.5,
+          fillOpacity: 0.5
+        }).addTo(map);
+        markers.push(marker);
+      });
     }
 
-    // Clear all markers from the map
     function clearMarkers() {
-      markers.forEach(marker => map.removeLayer(marker));
+      markers.forEach(marker => marker.remove());
       markers = [];
     }
-
-    // Add marker for a sample location on the map
-    function addMarker(taxon, coords, color, collectionDate) {
-      const marker = L.marker(coords, {
-        icon: L.divIcon({
-          className: 'sample-point',
-          html: `<div style="width: 10px; height: 10px; background-color: ${color};"></div>`,
-          iconSize: [10, 10]
-        })
-      })
-      .bindPopup(`<b>Taxon: ${taxon}</b><br>Coordinates: ${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}<br>Collection Date: ${collectionDate}`)
-      .on('mouseover', function() {
-        this.openPopup();
-      })
-      .on('mouseout', function() {
-        this.closePopup();
-      });
-      
-      marker.addTo(map);
-      markers.push(marker);
-    }
-
-    // Trigger click on root node when page loads
-    document.addEventListener('DOMContentLoaded', () => {
-      onNodeClick(null, root);
-    });
   </script>
 </body>
 </html>
