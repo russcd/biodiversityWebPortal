@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Phylogenetic Tree with Realistic Sample Locations</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    body { display: flex; flex-direction: column; }
+    #header { text-align: center; font-size: 24px; font-weight: bold; padding: 10px; background-color: #f4f4f4; }
+    #tree-container { width: 50%; border-right: 1px solid #ccc; padding: 10px; }
+    #map { width: 50%; height: 100vh; }
+    svg { width: 100%; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="header">California Conservation Genomics Project</div>
+  <div style="display: flex; width: 100%;">
+    <div id="tree-container"></div>
+    <div id="map"></div>
+  </div>
+
+  <script>
+    // Inline Newick parser
+    function parseNewick(s) {
+      let ancestors = [];
+      let tree = {};
+      let tokens = s.split(/\s*(;|\(|\)|,|:)\s*/);
+      let nodeCounter = 0;
+      for (let i = 0; i < tokens.length; i++) {
+        let token = tokens[i];
+        switch (token) {
+          case '(':
+            let subtree = {};
+            tree.children = [subtree];
+            ancestors.push(tree);
+            tree = subtree;
+            break;
+          case ',':
+            let sibling = {};
+            ancestors[ancestors.length - 1].children.push(sibling);
+            tree = sibling;
+            break;
+          case ')':
+            tree = ancestors.pop();
+            break;
+          case ':':
+            break;
+          default:
+            let x = tokens[i - 1];
+            if (x === ')' || x === '(' || x === ',') {
+              tree.name = token || `Node_${nodeCounter++}`;
+            } else if (x === ':') {
+              tree.branch_length = parseFloat(token);
+            }
+        }
+      }
+      return tree;
+    }
+
+    // Define the Newick tree (example structure)
+    const newickString = "((A:0.1,B:0.2,(C:0.3,D:0.4):0.5):0.6,E:0.7);";
+    
+    // Sample locations: now each node can have multiple locations (100-150 samples per tip)
+    const californiaBounds = {
+      minLat: 32.5,
+      maxLat: 42.0,
+      minLon: -124.5,
+      maxLon: -114.0
+    };
+
+    function generateRandomLocations(numLocations) {
+      const locations = [];
+      for (let i = 0; i < numLocations; i++) {
+        const lat = californiaBounds.minLat + Math.random() * (californiaBounds.maxLat - californiaBounds.minLat);
+        const lon = californiaBounds.minLon + Math.random() * (californiaBounds.maxLon - californiaBounds.minLon);
+        locations.push([lat, lon]);
+      }
+      return locations;
+    }
+
+    // Generate realistic sample locations for each tip (100-150 samples per tip)
+    const sampleLocations = {
+      "A": generateRandomLocations(120),
+      "B": generateRandomLocations(130),
+      "C": generateRandomLocations(110),
+      "D": generateRandomLocations(125),
+      "E": generateRandomLocations(140)
+    };
+
+    // Generate a random date within the past 10 years
+    function generateRandomDate() {
+      const now = new Date();
+      const past = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
+      const randomDate = new Date(past.getTime() + Math.random() * (now.getTime() - past.getTime()));
+      return randomDate.toISOString().split('T')[0]; // Return as 'YYYY-MM-DD'
+    }
+
+    // Add collection date to each sample (tip)
+    const sampleMetadata = {
+      "A": { collection_date: generateRandomDate() },
+      "B": { collection_date: generateRandomDate() },
+      "C": { collection_date: generateRandomDate() },
+      "D": { collection_date: generateRandomDate() },
+      "E": { collection_date: generateRandomDate() }
+    };
+
+    // Parse the Newick string
+    const treeData = parseNewick(newickString);
+
+    // Create SVG for the tree
+    const svg = d3.select("#tree-container").append("svg"),
+          width = 600, height = 800;
+    svg.attr("width", width).attr("height", height);
+
+    // Layout and draw the tree
+    const layout = d3.tree().size([height, width - 160]);
+    const root = d3.hierarchy(treeData);
+    layout(root);
+
+    // Define color scale for the tips (leaf nodes)
+    const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+    // Create tree links
+    svg.selectAll(".link")
+       .data(root.links())
+       .enter().append("line")
+       .attr("class", "link")
+       .attr("x1", d => d.source.y)
+       .attr("y1", d => d.source.x)
+       .attr("x2", d => d.target.y)
+       .attr("y2", d => d.target.x)
+       .attr("stroke", "#555");
+
+    // Create tree nodes
+    svg.selectAll(".node")
+       .data(root.descendants())
+       .enter().append("circle")
+       .attr("class", "node")
+       .attr("cx", d => d.y)
+       .attr("cy", d => d.x)
+       .attr("r", 4)
+       .attr("fill", function(d) {
+         return d.children ? "#555" : colorScale(d.data.name);
+       })
+       .style("cursor", "pointer")
+       .on("click", function(event, d) { onNodeClick(event, d); });
+
+    // Add text labels to the tips (leaf nodes)
+    svg.selectAll(".node-label")
+       .data(root.descendants())
+       .enter().append("text")
+       .attr("class", "node-label")
+       .attr("x", d => d.y + 6) // Position text slightly to the right of the node
+       .attr("y", d => d.x)
+       .attr("dy", ".35em") // Vertical alignment
+       .attr("font-size", "12px")
+       .attr("fill", "#333")
+       .text(d => d.children ? "" : d.data.name); // Only show names for leaf nodes
+
+    // Initialize the map
+    const map = L.map('map').setView([36.7783, -119.4179], 6); // Centered on California
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let markers = [];
+
+    // Handle node clicks to display locations on the map
+    function onNodeClick(event, d) {
+      clearMarkers();
+
+      // Get the color for the clicked node
+      const nodeColor = colorScale(d.data.name);
+
+      // Check if the clicked node has locations in sampleLocations
+      if (sampleLocations[d.data.name] && sampleLocations[d.data.name].length > 0) {
+        sampleLocations[d.data.name].forEach(location => {
+          addMarker(d.data.name, location, nodeColor, sampleMetadata[d.data.name].collection_date);
+        });
+      } else if (d.data.children) {
+        const tips = [];
+        d.eachAfter(node => {
+          if (node.data && node.data.name && sampleLocations[node.data.name]) {
+            tips.push(node.data.name);
+          }
+        });
+        tips.forEach(taxon => {
+          sampleLocations[taxon].forEach(location => {
+            addMarker(taxon, location, colorScale(taxon), sampleMetadata[taxon].collection_date); // Always use tip's color
+          });
+        });
+      } else {
+        console.log(`No location data for node: ${d.data.name}`);
+      }
+    }
+
+    // Clear all markers from the map
+    function clearMarkers() {
+      markers.forEach(marker => map.removeLayer(marker));
+      markers = [];
+    }
+
+    // Add marker for a sample location on the map
+    function addMarker(taxon, coords, color, collectionDate) {
+      const marker = L.marker(coords, {
+        icon: L.divIcon({
+          className: 'sample-point',
+          html: `<div style="width: 10px; height: 10px; background-color: ${color};"></div>`,
+          iconSize: [10, 10]
+        })
+      })
+      .bindPopup(`<b>Taxon: ${taxon}</b><br>Coordinates: ${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}<br>Collection Date: ${collectionDate}`)
+      .on('mouseover', function() {
+        this.openPopup();
+      })
+      .on('mouseout', function() {
+        this.closePopup();
+      });
+      
+      marker.addTo(map);
+      markers.push(marker);
+    }
+  </script>
+</body>
+</html>
