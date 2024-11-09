@@ -35,9 +35,36 @@
   </div>
 
   <script>
-    // [Previous code remains exactly the same until the markers section]
+    // Global variables
+    let sampleLocations = {};
+    let sampleMetadata = {};
+    let colorScale;
+    let markers = [];
 
-    // Inline Newick parser
+    const californiaBounds = {
+      minLat: 32.5,
+      maxLat: 42.0,
+      minLon: -124.5,
+      maxLon: -114.0
+    };
+
+    function generateRandomLocations(numLocations) {
+      const locations = [];
+      for (let i = 0; i < numLocations; i++) {
+        const lat = californiaBounds.minLat + Math.random() * (californiaBounds.maxLat - californiaBounds.minLat);
+        const lon = californiaBounds.minLon + Math.random() * (californiaBounds.maxLon - californiaBounds.minLon);
+        locations.push([lat, lon]);
+      }
+      return locations;
+    }
+
+    function generateRandomDate() {
+      const now = new Date();
+      const past = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
+      const randomDate = new Date(past.getTime() + Math.random() * (now.getTime() - past.getTime()));
+      return randomDate.toISOString().split('T')[0];
+    }
+
     function parseNewick(s) {
       let ancestors = [];
       let tree = {};
@@ -74,103 +101,82 @@
       return tree;
     }
 
-    // Define the Newick tree (example structure)
-    const newickString = "((A:0.1,B:0.2,(C:0.3,D:0.4):0.5):0.6,E:0.7);";
-    
-    const californiaBounds = {
-      minLat: 32.5,
-      maxLat: 42.0,
-      minLon: -124.5,
-      maxLon: -114.0
-    };
-
-    function generateRandomLocations(numLocations) {
-      const locations = [];
-      for (let i = 0; i < numLocations; i++) {
-        const lat = californiaBounds.minLat + Math.random() * (californiaBounds.maxLat - californiaBounds.minLat);
-        const lon = californiaBounds.minLon + Math.random() * (californiaBounds.maxLon - californiaBounds.minLon);
-        locations.push([lat, lon]);
-      }
-      return locations;
-    }
-
-    const sampleLocations = {
-      "A": generateRandomLocations(120),
-      "B": generateRandomLocations(130),
-      "C": generateRandomLocations(110),
-      "D": generateRandomLocations(125),
-      "E": generateRandomLocations(140)
-    };
-
-    function generateRandomDate() {
-      const now = new Date();
-      const past = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
-      const randomDate = new Date(past.getTime() + Math.random() * (now.getTime() - past.getTime()));
-      return randomDate.toISOString().split('T')[0];
-    }
-
-    const sampleMetadata = {
-      "A": { collection_date: generateRandomDate() },
-      "B": { collection_date: generateRandomDate() },
-      "C": { collection_date: generateRandomDate() },
-      "D": { collection_date: generateRandomDate() },
-      "E": { collection_date: generateRandomDate() }
-    };
-
-    const treeData = parseNewick(newickString);
-
-    const svg = d3.select("#tree-container").append("svg"),
-          width = 600, height = 800;
-    svg.attr("width", width).attr("height", height);
-
-    const layout = d3.tree().size([height, width - 180]);
-    const root = d3.hierarchy(treeData);
-    layout(root);
-
-    const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
-
-    const xOffset = 30;
-    svg.selectAll(".link")
-       .data(root.links())
-       .enter().append("line")
-       .attr("class", "link")
-       .attr("x1", d => d.source.y + xOffset)
-       .attr("y1", d => d.source.x)
-       .attr("x2", d => d.target.y + xOffset)
-       .attr("y2", d => d.target.x)
-       .attr("stroke", "#555");
-
-    svg.selectAll(".node")
-       .data(root.descendants())
-       .enter().append("circle")
-       .attr("class", "node")
-       .attr("cx", d => d.y + xOffset)
-       .attr("cy", d => d.x)
-       .attr("r", 10)
-       .attr("fill", function(d) {
-         return d.children ? "#555" : colorScale(d.data.name);
-       })
-       .style("cursor", "pointer")
-       .on("click", function(event, d) { onNodeClick(event, d); });
-
-    svg.selectAll(".node-label")
-       .data(root.descendants())
-       .enter().append("text")
-       .attr("class", "node-label")
-       .attr("x", d => d.y + xOffset + 15)
-       .attr("y", d => d.x)
-       .attr("dy", ".35em")
-       .attr("font-size", "16px")
-       .attr("fill", "#333")
-       .text(d => d.children ? "" : d.data.name);
-
+    // Initialize map
     const map = L.map('map').setView([36.7783, -119.4179], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    let markers = [];
+    function calculateMarkerSize(totalPoints, map) {
+      // Increased base size significantly
+      const baseSize = 50;
+      
+      const bounds = map.getBounds();
+      const mapWidth = map.getSize().x;
+      const mapHeight = map.getSize().y;
+      const mapArea = mapWidth * mapHeight;
+      
+      // Increased the target area percentage
+      const targetArea = mapArea * 0.03;
+      const targetRadius = Math.sqrt(targetArea / (Math.PI * totalPoints));
+      
+      const currentZoom = map.getZoom();
+      const maxZoom = map.getMaxZoom();
+      // Adjusted zoom factor
+      const zoomFactor = Math.pow(2, currentZoom - maxZoom + 8);
+      
+      // Modified size calculation
+      const size = Math.max(
+        10,  // Increased minimum size
+        Math.min(
+          133,  // Increased maximum size
+          baseSize * zoomFactor * Math.sqrt(200 / totalPoints)
+        )
+      );
+      
+      return size;
+    }
+
+    function updateMarkerSizes(totalPoints) {
+      const newSize = calculateMarkerSize(totalPoints, map);
+      markers.forEach(marker => {
+        const icon = L.divIcon({
+          className: 'sample-point',
+          html: `<div style="width: ${newSize}px; height: ${newSize}px; background-color: ${marker.options.icon.options.html.match(/background-color: ([^;]+)/)[1]}; border-radius: 50%;"></div>`,
+          iconSize: [newSize, newSize]
+        });
+        marker.setIcon(icon);
+      });
+    }
+
+    function clearMarkers() {
+      markers.forEach(marker => {
+        map.removeLayer(marker);
+        map.off('zoomend');
+      });
+      markers = [];
+    }
+
+    function addMarker(taxon, coords, color, collectionDate, size) {
+      const marker = L.marker(coords, {
+        icon: L.divIcon({
+          className: 'sample-point',
+          html: `<div style="width: ${size}px; height: ${size}px; background-color: ${color}; border-radius: 50%;"></div>`,
+          iconSize: [size, size]
+        })
+      })
+      .bindPopup(`<b>Taxon: ${taxon}</b><br>Coordinates: ${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}<br>Collection Date: ${collectionDate}`)
+      .on('mouseover', function() {
+        this.openPopup();
+      })
+      .on('mouseout', function() {
+        this.closePopup();
+      });
+      
+      marker.addTo(map);
+      markers.push(marker);
+    }
 
     function countSamples(d) {
       if (!d.children) {
@@ -181,72 +187,143 @@
         .reduce((sum, node) => sum + (sampleLocations[node.data.name]?.length || 0), 0);
     }
 
-    function countDescendantTips(d) {
-      // If node is a leaf, return 1 (it's a tip)
+    function countTips(d) {
       if (!d.children) {
         return 1;
       }
-      // Otherwise, recursively count descendant tips
       return d.descendants().filter(node => !node.children).length;
     }
 
     function updateMetadataPopup(d) {
       const popup = document.getElementById('metadata-popup');
       const sampleCount = countSamples(d);
-      const tipCount = countDescendantTips(d); // Count tips for internal nodes
-      
       const name = d.children ? `Node ${d.data.name}` : `Taxon ${d.data.name}`;
       
-      popup.innerHTML = `
+      let content = `
         <strong>${name}</strong><br>
-        Total Samples: ${sampleCount}<br>
-        species: ${tipCount}
+        Total Samples: ${sampleCount}
       `;
-    }
 
-    // Calculate marker size based on total number of visible points
-    function calculateMarkerSize(totalPoints) {
-      // Base size when only one tip is selected (120-150 points)
-      const baseSize = 10;
-      // Maximum number of points (all tips selected, ~625 points in this example)
-      const maxPoints = 625;
+      if (d.children) {
+        content += `<br>Number species: ${countTips(d)}`;
+      }
       
-      // Calculate size with a minimum of 3 pixels
-      return Math.max(3, baseSize * Math.sqrt(150 / totalPoints));
+      popup.innerHTML = content;
     }
 
     function onNodeClick(event, d) {
       clearMarkers();
       updateMetadataPopup(d);
 
-      // Collect all locations that will be displayed
       let allLocations = [];
       if (sampleLocations[d.data.name] && sampleLocations[d.data.name].length > 0) {
         allLocations = sampleLocations[d.data.name];
       } else if (d.children) {
-        d.children.forEach(child => {
-          if (sampleLocations[child.data.name] && sampleLocations[child.data.name].length > 0) {
-            allLocations = allLocations.concat(sampleLocations[child.data.name]);
+        d.eachAfter(node => {
+          if (node.data && node.data.name && sampleLocations[node.data.name]) {
+            allLocations = allLocations.concat(sampleLocations[node.data.name]);
           }
         });
       }
 
-      allLocations.forEach(location => {
-        const marker = L.circleMarker(location, {
-          radius: calculateMarkerSize(allLocations.length),
-          color: "#ff7800",
-          weight: 1,
-          opacity: 0.5,
-          fillOpacity: 0.5
-        }).addTo(map);
-        markers.push(marker);
+      const markerSize = calculateMarkerSize(allLocations.length, map);
+
+      if (sampleLocations[d.data.name] && sampleLocations[d.data.name].length > 0) {
+        sampleLocations[d.data.name].forEach(location => {
+          addMarker(d.data.name, location, colorScale(d.data.name), sampleMetadata[d.data.name].collection_date, markerSize);
+        });
+      } else if (d.children) {
+        const tips = [];
+        d.eachAfter(node => {
+          if (node.data && node.data.name && sampleLocations[node.data.name]) {
+            tips.push(node.data.name);
+          }
+        });
+        tips.forEach(taxon => {
+          sampleLocations[taxon].forEach(location => {
+            addMarker(taxon, location, colorScale(taxon), sampleMetadata[taxon].collection_date, markerSize);
+          });
+        });
+      }
+
+      map.on('zoomend', function() {
+        updateMarkerSizes(allLocations.length);
       });
     }
 
-    function clearMarkers() {
-      markers.forEach(marker => marker.remove());
-      markers = [];
-    }
+    // Initialize everything when the document is ready
+    document.addEventListener('DOMContentLoaded', () => {
+      const newickString = "((A:0.9,(B:0.,(C:0.3,D:0.4):0.5):0.1):0.6,E:2.8);";
+      
+      // Initialize sample locations and metadata
+      sampleLocations = {
+        "A": generateRandomLocations(120),
+        "B": generateRandomLocations(130),
+        "C": generateRandomLocations(110),
+        "D": generateRandomLocations(125),
+        "E": generateRandomLocations(140)
+      };
+
+      sampleMetadata = {
+        "A": { collection_date: generateRandomDate() },
+        "B": { collection_date: generateRandomDate() },
+        "C": { collection_date: generateRandomDate() },
+        "D": { collection_date: generateRandomDate() },
+        "E": { collection_date: generateRandomDate() }
+      };
+
+      // Initialize colorScale
+      colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+      // Parse the Newick string into tree data
+      const treeData = parseNewick(newickString);
+
+      const svg = d3.select("#tree-container").append("svg");
+      const width = 600, height = 800;
+      svg.attr("width", width).attr("height", height);
+
+      const layout = d3.tree().size([height, width - 180]);
+      const root = d3.hierarchy(treeData);
+      layout(root);
+
+      const xOffset = 30;
+      svg.selectAll(".link")
+         .data(root.links())
+         .enter().append("line")
+         .attr("class", "link")
+         .attr("x1", d => d.source.y + xOffset)
+         .attr("y1", d => d.source.x)
+         .attr("x2", d => d.target.y + xOffset)
+         .attr("y2", d => d.target.x)
+         .attr("stroke", "#555");
+
+      svg.selectAll(".node")
+         .data(root.descendants())
+         .enter().append("circle")
+         .attr("class", "node")
+         .attr("cx", d => d.y + xOffset)
+         .attr("cy", d => d.x)
+         .attr("r", 10)
+         .attr("fill", function(d) {
+           return d.children ? "#555" : colorScale(d.data.name);
+         })
+         .style("cursor", "pointer")
+         .on("click", function(event, d) { onNodeClick(event, d); });
+
+      svg.selectAll(".node-label")
+         .data(root.descendants())
+         .enter().append("text")
+         .attr("class", "node-label")
+         .attr("x", d => d.y + xOffset + 15)
+         .attr("y", d => d.x)
+         .attr("dy", ".35em")
+         .attr("font-size", "16px")
+         .attr("fill", "#333")
+         .text(d => d.children ? "" : d.data.name);
+
+      // Initial visualization
+      onNodeClick(null, root);
+    });
   </script>
 </body>
 </html>
